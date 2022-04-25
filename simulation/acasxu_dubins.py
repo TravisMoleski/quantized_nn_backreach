@@ -520,7 +520,7 @@ class State:
                              self.v_own * np.sin(self.vec[2]),
                              self.v_int * np.cos(self.vec[5]),
                              self.v_int * np.sin(self.vec[5]),
-    )
+            )
 
             if tau_now == 0:
                 min_dist_sq = min(min_dist_sq, cur_dist_sq)
@@ -544,10 +544,10 @@ class State:
             assert not self.commands
             assert not self.int_commands
 
-    def tau_now(self):
-        """return the integer value of tau based on tau_init, tau_dot, and self.vec[-1]"""
+    # def tau_now(self):
+    #     """return the integer value of tau based on tau_init, tau_dot, and self.vec[-1]"""
 
-        return round(self.tau_init + self.tau_dot * self.vec[-1])
+    #     return round(self.tau_init + self.tau_dot * self.vec[-1])
 
     def update_command(self):
         'update command based on current state'''
@@ -567,8 +567,17 @@ class State:
             self.command = 0
         else:
             last_command = self.command
+            range, range_rate, tau_now = tools.RangeRate(self.vec[0],
+                             self.vec[1],
+                             self.vec[3],
+                             self.vec[4],
+                             self.v_own * np.cos(self.vec[2]),
+                             self.v_own * np.sin(self.vec[2]),
+                             self.v_int * np.cos(self.vec[5]),
+                             self.v_int * np.sin(self.vec[5]),
+            )
 
-            ni = network_index(last_command, self.tau_now())
+            ni = network_index(last_command, tau_now)
             net = State.nets[ni]
 
             state = [rho, theta, psi, v_own, v_int]
@@ -762,9 +771,9 @@ def main():
     tau_dot = -1 if max_tau > 0 else 0
             
     init_vec = np.array([-10000, 0, 2*np.pi, 10000, 0, np.pi, 0])
-    cmd_list = [0] * 100
+    cmd_list = [0] * 150
     v_own = 100
-    v_int = 100
+    v_int = 200
     init_velo = [v_own, v_int]
     range, range_rate, tau_init = tools.RangeRate(init_vec[0],
                              init_vec[1],
