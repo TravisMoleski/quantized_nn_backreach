@@ -6,6 +6,7 @@ Used for falsification, where the opponent is allowed to maneuver over time
 
 from functools import lru_cache
 import time
+import sys
 import math
 import argparse
 
@@ -23,6 +24,8 @@ from matplotlib.lines import Line2D
 
 import onnxruntime as ort
 from numba import njit
+
+import tools
 
 def init_plot():
     'initialize plotting style'
@@ -509,17 +512,25 @@ class State:
 
             t += State.dt
 
-            tau_now = self.tau_now()
+            tau_now = tools.RangeRate(self.vec[0],
+                             self.vec[1],
+                             self.vec[3],
+                             self.vec[4],
+                             self.v_own * np.cos(self.vec[2]),
+                             self.v_own * np.sin(self.vec[2]),
+                             self.v_int * np.cos(self.vec[5]),
+                             self.v_int * np.sin(self.vec[5]),
+    )
 
             if tau_now == 0:
                 min_dist_sq = min(min_dist_sq, cur_dist_sq)
 
-            if cur_dist_sq > prev_dist_sq and cur_dist_sq > 500**2:
-                # distance was increasing
-                break
+            # if cur_dist_sq > prev_dist_sq and cur_dist_sq > 500**2:
+            #     # distance was increasing
+            #     break
 
-            if tau_now < 0:
-                break
+            # if tau_now < 0:
+            #     break
 
             prev_dist_sq = cur_dist_sq
 
@@ -575,7 +586,7 @@ class State:
             # repeat last command if no more commands
             self.u_list_index = min(self.u_list_index, len(self.u_list) - 1)
 
-def plot(s, save_mp4):
+def plot(s, save_mp4, v_own, v_int):
     """plot a specific simulation"""
 
     s.vec = s.vec_list[0] # for printing the correct state
@@ -652,12 +663,22 @@ def plot(s, save_mp4):
 
         s = states[0]
         secs = f * State.dt
-        tau = round(s.tau_init + s.tau_dot * secs)
-        vec = s.vec_list[f]
-        dx = vec[3] - vec[0]
-        dy = vec[4] - vec[1]
-        rho = math.sqrt(dx**2 + dy**2)
-        time_str = f'Time: {secs:.1f} ($\\tau$: {tau} sec, $\\rho$: {rho:.1f} ft)'
+
+        vec = s.vec_list[f]        
+        range, range_rate, tau = tools.RangeRate(vec[0],
+                            vec[1],
+                            vec[3],
+                            vec[4],
+                            v_own * np.cos(vec[2]),
+                            v_own * np.sin(vec[2]),
+                            v_int * np.cos(vec[5]),
+                            v_int * np.sin(vec[5]),
+        )
+        # tau = round(s.tau_init + s.tau_dot * secs)
+        # dx = vec[3] - vec[0]
+        # dy = vec[4] - vec[1]
+        # rho = math.sqrt(dx**2 + dy**2)
+        time_str = f'Time: {secs:.1f} ($\\tau$: {tau:.1f} sec, $\\rho$: {range:.1f} ft)'
         time_text.set_text(time_str)
 
         artists = [time_text]
@@ -734,69 +755,34 @@ def main():
     parser.add_argument("--save-mp4", action='store_true', default=False, help="Save plotted mp4 files to disk.")
     args = parser.parse_args()
 
-    intruder_can_turn = False
 
     save_mp4 = args.save_mp4
-
-    interesting_seed = -1
-    interesting_state = None
-    fixed_seed = None #835526
     max_tau = 160
 
     tau_dot = -1 if max_tau > 0 else 0
+            
+    init_vec = np.array([-10000, 0, 2*np.pi, 10000, 0, np.pi, 0])
+    cmd_list = [0] * 100
+    v_own = 100
+    v_int = 100
+    init_velo = [v_own, v_int]
+    range, range_rate, tau_init = tools.RangeRate(init_vec[0],
+                             init_vec[1],
+                             init_vec[3],
+                             init_vec[4],
+                             v_own * np.cos(init_vec[2]),
+                             v_own * np.sin(init_vec[2]),
+                             v_int * np.cos(init_vec[5]),
+                             v_int * np.sin(init_vec[5]),
+    )
 
-    if fixed_seed is not None:
-        interesting_seed = fixed_seed
-    else:
-        num_sims = 10000
-        # with 10000 sims, seed 671 has min_dist 4254.5ft
+    print("INIT TAU:", tau_init)
+    # sys.exit(1)
 
-        start = time.perf_counter()
-        num_with_min_dist = 0
-
-        for seed in range(num_sims):
-            if seed % 1000 == 0:
-                print(f"{(seed//1000) % 10}", end='', flush=True)
-            elif seed % 100 == 0:
-                print(".", end='', flush=True)
-
-            init_vec, cmd_list, init_velo, tau_init = make_random_input(seed, max_tau=max_tau, intruder_can_turn=intruder_can_turn)
-
-            v_own = init_velo[0]
-            v_int = init_velo[1]
-
-            # run the simulation
-            s = State(init_vec, tau_init, tau_dot, v_own, v_int, save_states=False)
-            s.simulate(cmd_list)
-
-            if s.min_dist != np.inf:
-                num_with_min_dist += 1
-
-            # save most interesting state based on some criteria
-            if interesting_state is None or s.min_dist < interesting_state.min_dist:
-                interesting_seed = seed
-                interesting_state = s
-
-        percent = 100 * num_with_min_dist / num_sims
-        print(f"Num sims reaching tau=0: {num_with_min_dist}/{num_sims} ({percent:.1f}%)")
-
-        diff = time.perf_counter() - start
-        ms_per_sim = round(1000 * diff / num_sims, 3)
-        print(f"\nDid {num_sims} sims in {round(diff, 1)} secs ({ms_per_sim}ms per sim)")
-
-    # optional: do plot
-    assert interesting_seed != -1
-              
-    init_vec, cmd_list, init_velo, tau_init = make_random_input(interesting_seed, max_tau=max_tau,
-                                                                intruder_can_turn=intruder_can_turn)
     s = State(init_vec, tau_init, tau_dot, init_velo[0], init_velo[1], save_states=True)
-    s.simulate(cmd_list)
+    s.simulate(cmd_list) 
 
-    assert abs(s.min_dist - interesting_state.min_dist) < 1e-6, "simulation mismatch"
-
-    d = round(s.min_dist, 2)
-    print(f"\nSeed {interesting_seed} has min_dist {d}ft")
-    plot(s, save_mp4)
+    plot(s, save_mp4,v_own, v_int)
 
 if __name__ == "__main__":
     main()
